@@ -2,7 +2,10 @@
 // jobs concurrently and collecting their results.
 package pool
 
-import "sync"
+import (
+	"container/heap"
+	"sync"
+)
 
 // Job is a unit of work that produces a value of type T or an error.
 type Job[T any] func() (T, error)
@@ -13,22 +16,61 @@ type Result[T any] struct {
 	Err   error
 }
 
-// jobItem wraps a submitted Job as it waits in the queue.
+// jobItem wraps a submitted Job as it waits in the queue. priority and seq
+// are not yet settable from outside the package; every item currently
+// shares priority 0, so the heap below behaves as a plain FIFO queue
+// ordered by seq. A later commit exposes priority on the public API.
 type jobItem[T any] struct {
-	fn Job[T]
+	fn       Job[T]
+	priority int
+	seq      int64
+	index    int
+}
+
+// jobQueue is a container/heap.Interface implementation that orders items
+// by descending priority, breaking ties by submission order (seq).
+type jobQueue[T any] []*jobItem[T]
+
+func (q jobQueue[T]) Len() int { return len(q) }
+
+func (q jobQueue[T]) Less(i, j int) bool {
+	if q[i].priority != q[j].priority {
+		return q[i].priority > q[j].priority
+	}
+	return q[i].seq < q[j].seq
+}
+
+func (q jobQueue[T]) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
+	q[i].index = i
+	q[j].index = j
+}
+
+func (q *jobQueue[T]) Push(x any) {
+	item := x.(*jobItem[T])
+	item.index = len(*q)
+	*q = append(*q, item)
+}
+
+func (q *jobQueue[T]) Pop() any {
+	old := *q
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil
+	item.index = -1
+	*q = old[:n-1]
+	return item
 }
 
 // Pool runs submitted jobs across a fixed number of worker goroutines.
 //
-// Jobs are held in an internal queue guarded by a mutex and condition
-// variable rather than an unbuffered channel. This is functionally
-// equivalent to the previous channel-based design but gives the queue a
-// concrete, inspectable data structure that later work (priority
-// ordering, dynamic scaling) can build on.
+// Jobs are held in a priority queue (container/heap) guarded by a mutex
+// and condition variable.
 type Pool[T any] struct {
 	mu      sync.Mutex
 	cond    *sync.Cond
-	queue   []*jobItem[T]
+	queue   jobQueue[T]
+	seq     int64
 	closing bool
 
 	results chan Result[T]
@@ -54,15 +96,14 @@ func (p *Pool[T]) worker() {
 	defer p.wg.Done()
 	for {
 		p.mu.Lock()
-		for len(p.queue) == 0 && !p.closing {
+		for p.queue.Len() == 0 && !p.closing {
 			p.cond.Wait()
 		}
-		if len(p.queue) == 0 {
+		if p.queue.Len() == 0 {
 			p.mu.Unlock()
 			return
 		}
-		item := p.queue[0]
-		p.queue = p.queue[1:]
+		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
 		value, err := item.fn()
@@ -74,7 +115,8 @@ func (p *Pool[T]) worker() {
 // once a worker becomes available.
 func (p *Pool[T]) Submit(job Job[T]) {
 	p.mu.Lock()
-	p.queue = append(p.queue, &jobItem[T]{fn: job})
+	p.seq++
+	heap.Push(&p.queue, &jobItem[T]{fn: job, seq: p.seq})
 	p.cond.Signal()
 	p.mu.Unlock()
 }
