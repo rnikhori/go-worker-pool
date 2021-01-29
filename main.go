@@ -17,9 +17,11 @@ func main() {
 	go func() {
 		for i := 1; i <= numJobs; i++ {
 			i := i
-			p.Submit(func() (int, error) {
-				time.Sleep(100 * time.Millisecond)
-				return i * i, nil
+			p.Submit(pool.Job[int]{
+				Fn: func() (int, error) {
+					time.Sleep(100 * time.Millisecond)
+					return i * i, nil
+				},
 			})
 		}
 		p.Close()

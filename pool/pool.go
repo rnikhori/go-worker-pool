@@ -7,8 +7,14 @@ import (
 	"sync"
 )
 
-// Job is a unit of work that produces a value of type T or an error.
-type Job[T any] func() (T, error)
+// Job is a unit of work submitted to a Pool. Fn is called by a worker
+// goroutine to produce a value of type T or an error. Priority controls
+// queue ordering: jobs with a higher Priority are dequeued before jobs
+// with a lower one; jobs with equal priority run in submission order.
+type Job[T any] struct {
+	Fn       func() (T, error)
+	Priority int
+}
 
 // Result pairs a job's return value with any error it produced.
 type Result[T any] struct {
@@ -16,15 +22,11 @@ type Result[T any] struct {
 	Err   error
 }
 
-// jobItem wraps a submitted Job as it waits in the queue. priority and seq
-// are not yet settable from outside the package; every item currently
-// shares priority 0, so the heap below behaves as a plain FIFO queue
-// ordered by seq. A later commit exposes priority on the public API.
+// jobItem wraps a submitted Job as it waits in the queue.
 type jobItem[T any] struct {
-	fn       Job[T]
-	priority int
-	seq      int64
-	index    int
+	job   Job[T]
+	seq   int64
+	index int
 }
 
 // jobQueue is a container/heap.Interface implementation that orders items
@@ -34,8 +36,8 @@ type jobQueue[T any] []*jobItem[T]
 func (q jobQueue[T]) Len() int { return len(q) }
 
 func (q jobQueue[T]) Less(i, j int) bool {
-	if q[i].priority != q[j].priority {
-		return q[i].priority > q[j].priority
+	if q[i].job.Priority != q[j].job.Priority {
+		return q[i].job.Priority > q[j].job.Priority
 	}
 	return q[i].seq < q[j].seq
 }
@@ -106,17 +108,18 @@ func (p *Pool[T]) worker() {
 		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
-		value, err := item.fn()
+		value, err := item.job.Fn()
 		p.results <- Result[T]{Value: value, Err: err}
 	}
 }
 
 // Submit queues a job for execution. It returns immediately; the job runs
-// once a worker becomes available.
+// once a worker becomes available, ahead of any already-queued job with a
+// lower Priority.
 func (p *Pool[T]) Submit(job Job[T]) {
 	p.mu.Lock()
 	p.seq++
-	heap.Push(&p.queue, &jobItem[T]{fn: job, seq: p.seq})
+	heap.Push(&p.queue, &jobItem[T]{job: job, seq: p.seq})
 	p.cond.Signal()
 	p.mu.Unlock()
 }
