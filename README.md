@@ -15,3 +15,22 @@ go run .
 ```
 
 Runs 20 fake jobs across 5 workers and prints the sorted squares of 1..20.
+
+## Job priorities
+
+Jobs are submitted as a `pool.Job[T]` struct with a `Priority` field:
+
+```go
+p.Submit(pool.Job[int]{
+	Priority: 10,
+	Fn: func() (int, error) {
+		return doImportantWork()
+	},
+})
+```
+
+Internally the pool keeps queued jobs in a `container/heap` priority
+queue. A worker always dequeues the highest-priority job available;
+jobs of equal priority are run in the order they were submitted
+(first-in, first-out). The default priority is `0`, so submitting
+without setting `Priority` behaves exactly like a plain FIFO queue.
