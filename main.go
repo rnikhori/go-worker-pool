@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -18,7 +19,7 @@ func main() {
 		for i := 1; i <= numJobs; i++ {
 			i := i
 			p.Submit(pool.Job[int]{
-				Fn: func() (int, error) {
+				Fn: func(ctx context.Context) (int, error) {
 					time.Sleep(100 * time.Millisecond)
 					return i * i, nil
 				},

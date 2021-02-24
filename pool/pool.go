@@ -4,15 +4,17 @@ package pool
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 )
 
 // Job is a unit of work submitted to a Pool. Fn is called by a worker
-// goroutine to produce a value of type T or an error. Priority controls
-// queue ordering: jobs with a higher Priority are dequeued before jobs
-// with a lower one; jobs with equal priority run in submission order.
+// goroutine, with a context the worker controls, to produce a value of
+// type T or an error. Priority controls queue ordering: jobs with a
+// higher Priority are dequeued before jobs with a lower one; jobs with
+// equal priority run in submission order.
 type Job[T any] struct {
-	Fn       func() (T, error)
+	Fn       func(ctx context.Context) (T, error)
 	Priority int
 }
 
@@ -108,7 +110,7 @@ func (p *Pool[T]) worker() {
 		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
-		value, err := item.job.Fn()
+		value, err := item.job.Fn(context.Background())
 		p.results <- Result[T]{Value: value, Err: err}
 	}
 }

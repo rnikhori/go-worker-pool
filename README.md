@@ -23,8 +23,8 @@ Jobs are submitted as a `pool.Job[T]` struct with a `Priority` field:
 ```go
 p.Submit(pool.Job[int]{
 	Priority: 10,
-	Fn: func() (int, error) {
-		return doImportantWork()
+	Fn: func(ctx context.Context) (int, error) {
+		return doImportantWork(ctx)
 	},
 })
 ```

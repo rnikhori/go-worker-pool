@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"reflect"
 	"sync"
 	"testing"
@@ -16,7 +17,7 @@ func TestPriorityOrdering(t *testing.T) {
 	var order []int
 
 	block := make(chan struct{})
-	p.Submit(pool.Job[int]{Fn: func() (int, error) {
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
 		<-block
 		return 0, nil
 	}})
@@ -40,7 +41,7 @@ func TestPriorityOrdering(t *testing.T) {
 		s := s
 		p.Submit(pool.Job[int]{
 			Priority: s.priority,
-			Fn: func() (int, error) {
+			Fn: func(ctx context.Context) (int, error) {
 				mu.Lock()
 				order = append(order, s.id)
 				mu.Unlock()
