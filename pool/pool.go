@@ -6,16 +6,20 @@ import (
 	"container/heap"
 	"context"
 	"sync"
+	"time"
 )
 
 // Job is a unit of work submitted to a Pool. Fn is called by a worker
 // goroutine, with a context the worker controls, to produce a value of
 // type T or an error. Priority controls queue ordering: jobs with a
 // higher Priority are dequeued before jobs with a lower one; jobs with
-// equal priority run in submission order.
+// equal priority run in submission order. Timeout, if non-zero, bounds
+// how long Fn is allowed to run: the context passed to Fn is cancelled
+// with context.DeadlineExceeded once Timeout elapses.
 type Job[T any] struct {
 	Fn       func(ctx context.Context) (T, error)
 	Priority int
+	Timeout  time.Duration
 }
 
 // Result pairs a job's return value with any error it produced.
@@ -110,9 +114,21 @@ func (p *Pool[T]) worker() {
 		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
-		value, err := item.job.Fn(context.Background())
+		value, err := p.runJob(item.job)
 		p.results <- Result[T]{Value: value, Err: err}
 	}
+}
+
+// runJob executes a single job, applying its Timeout (if any) as a
+// context deadline.
+func (p *Pool[T]) runJob(job Job[T]) (T, error) {
+	ctx := context.Background()
+	if job.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
+		defer cancel()
+	}
+	return job.Fn(ctx)
 }
 
 // Submit queues a job for execution. It returns immediately; the job runs
