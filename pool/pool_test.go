@@ -2,6 +2,7 @@ package pool_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -59,5 +60,28 @@ func TestPriorityOrdering(t *testing.T) {
 	want := []int{4, 2, 3, 1, 5}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("completion order = %v, want %v", order, want)
+	}
+}
+
+func TestJobTimeout(t *testing.T) {
+	p := pool.NewPool[int](1)
+
+	p.Submit(pool.Job[int]{
+		Timeout: 20 * time.Millisecond,
+		Fn: func(ctx context.Context) (int, error) {
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return 1, nil
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		},
+	})
+	p.Close()
+	go p.Wait()
+
+	r := <-p.Results()
+	if !errors.Is(r.Err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", r.Err)
 	}
 }
