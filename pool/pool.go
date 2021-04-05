@@ -15,11 +15,14 @@ import (
 // higher Priority are dequeued before jobs with a lower one; jobs with
 // equal priority run in submission order. Timeout, if non-zero, bounds
 // how long Fn is allowed to run: the context passed to Fn is cancelled
-// with context.DeadlineExceeded once Timeout elapses.
+// with context.DeadlineExceeded once Timeout elapses. MaxRetries sets
+// how many additional attempts are made if Fn returns a non-nil error;
+// the default of 0 means a failing job is not retried.
 type Job[T any] struct {
-	Fn       func(ctx context.Context) (T, error)
-	Priority int
-	Timeout  time.Duration
+	Fn         func(ctx context.Context) (T, error)
+	Priority   int
+	Timeout    time.Duration
+	MaxRetries int
 }
 
 // Result pairs a job's return value with any error it produced.
@@ -114,8 +117,47 @@ func (p *Pool[T]) worker() {
 		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
-		value, err := p.runJob(item.job)
+		value, err := p.runWithRetries(item.job)
 		p.results <- Result[T]{Value: value, Err: err}
+	}
+}
+
+// defaultRetryBaseDelay and defaultRetryMaxDelay set the exponential
+// backoff schedule used between retry attempts: delay doubles on each
+// attempt starting from the base, capped at the max.
+const (
+	defaultRetryBaseDelay = 50 * time.Millisecond
+	defaultRetryMaxDelay  = 2 * time.Second
+)
+
+// backoffDelay returns the delay to sleep before retry attempt n (n
+// starting at 1 for the first retry).
+func backoffDelay(n int, base, max time.Duration) time.Duration {
+	delay := base
+	for i := 1; i < n; i++ {
+		delay *= 2
+		if delay >= max {
+			return max
+		}
+	}
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
+// runWithRetries runs job, retrying up to job.MaxRetries times with
+// exponential backoff if Fn returns a non-nil error. It returns the
+// value and error from the last attempt made.
+func (p *Pool[T]) runWithRetries(job Job[T]) (T, error) {
+	var value T
+	var err error
+	for attempt := 0; ; attempt++ {
+		value, err = p.runJob(job)
+		if err == nil || attempt >= job.MaxRetries {
+			return value, err
+		}
+		time.Sleep(backoffDelay(attempt+1, defaultRetryBaseDelay, defaultRetryMaxDelay))
 	}
 }
 
