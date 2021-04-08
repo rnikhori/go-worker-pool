@@ -86,12 +86,33 @@ type Pool[T any] struct {
 
 	results chan Result[T]
 	wg      sync.WaitGroup
+
+	retryBaseDelay time.Duration
+	retryMaxDelay  time.Duration
+}
+
+// Option configures optional Pool behavior at construction time.
+type Option[T any] func(*Pool[T])
+
+// WithRetryBackoff overrides the default exponential backoff schedule
+// used between job retry attempts. base is the delay before the first
+// retry; the delay doubles on each subsequent attempt up to max.
+func WithRetryBackoff[T any](base, max time.Duration) Option[T] {
+	return func(p *Pool[T]) {
+		p.retryBaseDelay = base
+		p.retryMaxDelay = max
+	}
 }
 
 // NewPool starts numWorkers goroutines ready to process jobs.
-func NewPool[T any](numWorkers int) *Pool[T] {
+func NewPool[T any](numWorkers int, opts ...Option[T]) *Pool[T] {
 	p := &Pool[T]{
-		results: make(chan Result[T]),
+		results:        make(chan Result[T]),
+		retryBaseDelay: defaultRetryBaseDelay,
+		retryMaxDelay:  defaultRetryMaxDelay,
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 	p.cond = sync.NewCond(&p.mu)
 
@@ -157,7 +178,7 @@ func (p *Pool[T]) runWithRetries(job Job[T]) (T, error) {
 		if err == nil || attempt >= job.MaxRetries {
 			return value, err
 		}
-		time.Sleep(backoffDelay(attempt+1, defaultRetryBaseDelay, defaultRetryMaxDelay))
+		time.Sleep(backoffDelay(attempt+1, p.retryBaseDelay, p.retryMaxDelay))
 	}
 }
 
