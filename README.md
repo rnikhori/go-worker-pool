@@ -54,3 +54,26 @@ well-behaved `Fn` that checks `ctx.Done()` (or passes `ctx` down to
 anything it calls) fails fast with `context.DeadlineExceeded` instead
 of blocking a worker indefinitely. A zero `Timeout` (the default) means
 no deadline is applied.
+
+## Retries with exponential backoff
+
+A job can ask to be retried when its `Fn` returns an error:
+
+```go
+p.Submit(pool.Job[int]{
+	MaxRetries: 3,
+	Fn: func(ctx context.Context) (int, error) {
+		return callFlakyService(ctx)
+	},
+})
+```
+
+After a failed attempt, the worker sleeps for an exponentially
+increasing delay (doubling each time, starting at 50ms and capped at
+2s by default) before trying again, up to `MaxRetries` additional
+attempts. The `Result` delivered on `Results()` reflects the outcome
+of the last attempt. The default schedule can be overridden pool-wide:
+
+```go
+p := pool.NewPool[int](numWorkers, pool.WithRetryBackoff[int](100*time.Millisecond, 10*time.Second))
+```
