@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,5 +84,58 @@ func TestJobTimeout(t *testing.T) {
 	r := <-p.Results()
 	if !errors.Is(r.Err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", r.Err)
+	}
+}
+
+func TestRetriesEventuallySucceed(t *testing.T) {
+	p := pool.NewPool[int](1, pool.WithRetryBackoff[int](time.Millisecond, 5*time.Millisecond))
+
+	var attempts int32
+	p.Submit(pool.Job[int]{
+		MaxRetries: 3,
+		Fn: func(ctx context.Context) (int, error) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 3 {
+				return 0, errors.New("not yet")
+			}
+			return 42, nil
+		},
+	})
+	p.Close()
+	go p.Wait()
+
+	r := <-p.Results()
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if r.Value != 42 {
+		t.Fatalf("value = %d, want 42", r.Value)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+}
+
+func TestRetriesExhausted(t *testing.T) {
+	p := pool.NewPool[int](1, pool.WithRetryBackoff[int](time.Millisecond, 5*time.Millisecond))
+
+	var attempts int32
+	wantErr := errors.New("always fails")
+	p.Submit(pool.Job[int]{
+		MaxRetries: 2,
+		Fn: func(ctx context.Context) (int, error) {
+			atomic.AddInt32(&attempts, 1)
+			return 0, wantErr
+		},
+	})
+	p.Close()
+	go p.Wait()
+
+	r := <-p.Results()
+	if !errors.Is(r.Err, wantErr) {
+		t.Fatalf("err = %v, want %v", r.Err, wantErr)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Fatalf("attempts = %d, want 3 (1 initial + 2 retries)", got)
 	}
 }
