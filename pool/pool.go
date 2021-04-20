@@ -5,6 +5,7 @@ package pool
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -183,8 +184,16 @@ func (p *Pool[T]) runWithRetries(job Job[T]) (T, error) {
 }
 
 // runJob executes a single job, applying its Timeout (if any) as a
-// context deadline.
-func (p *Pool[T]) runJob(job Job[T]) (T, error) {
+// context deadline and recovering from any panic inside Fn so that one
+// bad job cannot take down its worker goroutine. A recovered panic is
+// reported as an error on the returned Result.
+func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("pool: job panicked: %v", r)
+		}
+	}()
+
 	ctx := context.Background()
 	if job.Timeout > 0 {
 		var cancel context.CancelFunc
