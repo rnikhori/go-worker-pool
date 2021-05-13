@@ -139,3 +139,34 @@ func TestRetriesExhausted(t *testing.T) {
 		t.Fatalf("attempts = %d, want 3 (1 initial + 2 retries)", got)
 	}
 }
+
+func TestPanicRecovery(t *testing.T) {
+	p := pool.NewPool[int](2)
+
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		panic("boom")
+	}})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		return 7, nil
+	}})
+	p.Close()
+	go p.Wait()
+
+	var sawPanicErr bool
+	var sawGoodResult bool
+	for r := range p.Results() {
+		switch {
+		case r.Err != nil:
+			sawPanicErr = true
+		case r.Value == 7:
+			sawGoodResult = true
+		}
+	}
+
+	if !sawPanicErr {
+		t.Fatal("expected the panicking job to surface as an error result")
+	}
+	if !sawGoodResult {
+		t.Fatal("expected the second job to complete normally after the panic")
+	}
+}
