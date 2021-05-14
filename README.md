@@ -77,3 +77,12 @@ of the last attempt. The default schedule can be overridden pool-wide:
 ```go
 p := pool.NewPool[int](numWorkers, pool.WithRetryBackoff[int](100*time.Millisecond, 10*time.Second))
 ```
+
+## Panic recovery
+
+If a job's `Fn` panics, the pool recovers the panic in the worker
+goroutine that ran it, converts it into an error (wrapping the
+recovered value's message), and delivers it as a normal `Result` with
+`Err` set. The worker itself is unaffected and continues picking up
+and running subsequent jobs — a single misbehaving job cannot take
+down the pool.
