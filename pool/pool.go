@@ -90,6 +90,24 @@ type Pool[T any] struct {
 
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
+
+	statsMu sync.Mutex
+	stats   Stats
+}
+
+// Stats holds a snapshot of a Pool's execution metrics.
+type Stats struct {
+	Completed uint64
+	Failed    uint64
+}
+
+// Stats returns a thread-safe snapshot of the pool's execution metrics
+// as of the call. It may be called concurrently with job submission and
+// execution.
+func (p *Pool[T]) Stats() Stats {
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	return p.stats
 }
 
 // Option configures optional Pool behavior at construction time.
@@ -140,6 +158,7 @@ func (p *Pool[T]) worker() {
 		p.mu.Unlock()
 
 		value, err := p.runWithRetries(item.job)
+		p.recordOutcome(err)
 		p.results <- Result[T]{Value: value, Err: err}
 	}
 }
@@ -201,6 +220,17 @@ func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
 		defer cancel()
 	}
 	return job.Fn(ctx)
+}
+
+// recordOutcome updates Stats after a job finishes (after all retries).
+func (p *Pool[T]) recordOutcome(err error) {
+	p.statsMu.Lock()
+	if err != nil {
+		p.stats.Failed++
+	} else {
+		p.stats.Completed++
+	}
+	p.statsMu.Unlock()
 }
 
 // Submit queues a job for execution. It returns immediately; the job runs
