@@ -91,14 +91,16 @@ type Pool[T any] struct {
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
 
-	statsMu sync.Mutex
-	stats   Stats
+	statsMu       sync.Mutex
+	stats         Stats
+	totalDuration time.Duration
 }
 
 // Stats holds a snapshot of a Pool's execution metrics.
 type Stats struct {
-	Completed uint64
-	Failed    uint64
+	Completed   uint64
+	Failed      uint64
+	AvgDuration time.Duration
 }
 
 // Stats returns a thread-safe snapshot of the pool's execution metrics
@@ -107,7 +109,11 @@ type Stats struct {
 func (p *Pool[T]) Stats() Stats {
 	p.statsMu.Lock()
 	defer p.statsMu.Unlock()
-	return p.stats
+	snapshot := p.stats
+	if n := snapshot.Completed + snapshot.Failed; n > 0 {
+		snapshot.AvgDuration = p.totalDuration / time.Duration(n)
+	}
+	return snapshot
 }
 
 // Option configures optional Pool behavior at construction time.
@@ -157,8 +163,9 @@ func (p *Pool[T]) worker() {
 		item := heap.Pop(&p.queue).(*jobItem[T])
 		p.mu.Unlock()
 
+		start := time.Now()
 		value, err := p.runWithRetries(item.job)
-		p.recordOutcome(err)
+		p.recordOutcome(err, time.Since(start))
 		p.results <- Result[T]{Value: value, Err: err}
 	}
 }
@@ -223,13 +230,16 @@ func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
 }
 
 // recordOutcome updates Stats after a job finishes (after all retries).
-func (p *Pool[T]) recordOutcome(err error) {
+// duration is the total wall time spent on the job, including any
+// retries and backoff sleeps.
+func (p *Pool[T]) recordOutcome(err error, duration time.Duration) {
 	p.statsMu.Lock()
 	if err != nil {
 		p.stats.Failed++
 	} else {
 		p.stats.Completed++
 	}
+	p.totalDuration += duration
 	p.statsMu.Unlock()
 }
 
