@@ -100,6 +100,7 @@ type Pool[T any] struct {
 type Stats struct {
 	Completed   uint64
 	Failed      uint64
+	Retried     uint64
 	AvgDuration time.Duration
 }
 
@@ -205,6 +206,9 @@ func (p *Pool[T]) runWithRetries(job Job[T]) (T, error) {
 		if err == nil || attempt >= job.MaxRetries {
 			return value, err
 		}
+		p.statsMu.Lock()
+		p.stats.Retried++
+		p.statsMu.Unlock()
 		time.Sleep(backoffDelay(attempt+1, p.retryBaseDelay, p.retryMaxDelay))
 	}
 }
