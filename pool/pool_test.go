@@ -170,3 +170,45 @@ func TestPanicRecovery(t *testing.T) {
 		t.Fatal("expected the second job to complete normally after the panic")
 	}
 }
+
+func TestStats(t *testing.T) {
+	p := pool.NewPool[int](2, pool.WithRetryBackoff[int](time.Millisecond, 2*time.Millisecond))
+
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		time.Sleep(5 * time.Millisecond)
+		return 1, nil
+	}})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		return 0, errors.New("nope")
+	}})
+
+	var attempts int32
+	p.Submit(pool.Job[int]{
+		MaxRetries: 2,
+		Fn: func(ctx context.Context) (int, error) {
+			if atomic.AddInt32(&attempts, 1) < 2 {
+				return 0, errors.New("try again")
+			}
+			return 2, nil
+		},
+	})
+
+	p.Close()
+	go p.Wait()
+	for range p.Results() {
+	}
+
+	stats := p.Stats()
+	if stats.Completed != 2 {
+		t.Fatalf("Completed = %d, want 2", stats.Completed)
+	}
+	if stats.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", stats.Failed)
+	}
+	if stats.Retried != 1 {
+		t.Fatalf("Retried = %d, want 1", stats.Retried)
+	}
+	if stats.AvgDuration <= 0 {
+		t.Fatalf("AvgDuration = %v, want > 0", stats.AvgDuration)
+	}
+}
