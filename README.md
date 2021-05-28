@@ -86,3 +86,20 @@ recovered value's message), and delivers it as a normal `Result` with
 `Err` set. The worker itself is unaffected and continues picking up
 and running subsequent jobs — a single misbehaving job cannot take
 down the pool.
+
+## Metrics via Stats()
+
+A pool tracks its own execution metrics and exposes them through a
+thread-safe `Stats()` method:
+
+```go
+stats := p.Stats()
+fmt.Printf("completed=%d failed=%d retried=%d avg=%v\n",
+	stats.Completed, stats.Failed, stats.Retried, stats.AvgDuration)
+```
+
+`Completed` and `Failed` count finished jobs (after all retries) by
+outcome, `Retried` counts individual retry attempts, and `AvgDuration`
+is the mean wall-clock time spent per finished job, including any
+retries and backoff sleeps. `Stats()` can be called at any time,
+including while jobs are still running.
