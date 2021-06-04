@@ -94,6 +94,9 @@ type Pool[T any] struct {
 	statsMu       sync.Mutex
 	stats         Stats
 	totalDuration time.Duration
+
+	errsMu sync.Mutex
+	errs   []error
 }
 
 // Stats holds a snapshot of a Pool's execution metrics.
@@ -235,7 +238,8 @@ func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
 
 // recordOutcome updates Stats after a job finishes (after all retries).
 // duration is the total wall time spent on the job, including any
-// retries and backoff sleeps.
+// retries and backoff sleeps. A non-nil err is also appended to the
+// pool's error log, retrievable via Errors().
 func (p *Pool[T]) recordOutcome(err error, duration time.Duration) {
 	p.statsMu.Lock()
 	if err != nil {
@@ -245,6 +249,23 @@ func (p *Pool[T]) recordOutcome(err error, duration time.Duration) {
 	}
 	p.totalDuration += duration
 	p.statsMu.Unlock()
+
+	if err != nil {
+		p.errsMu.Lock()
+		p.errs = append(p.errs, err)
+		p.errsMu.Unlock()
+	}
+}
+
+// Errors returns a copy of every error produced by jobs run on this pool
+// so far (after retries are exhausted), in the order they finished. It
+// is safe to call concurrently with job submission and execution.
+func (p *Pool[T]) Errors() []error {
+	p.errsMu.Lock()
+	defer p.errsMu.Unlock()
+	out := make([]error, len(p.errs))
+	copy(out, p.errs)
+	return out
 }
 
 // Submit queues a job for execution. It returns immediately; the job runs
