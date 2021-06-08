@@ -212,3 +212,36 @@ func TestStats(t *testing.T) {
 		t.Fatalf("AvgDuration = %v, want > 0", stats.AvgDuration)
 	}
 }
+
+func TestErrorsAggregation(t *testing.T) {
+	p := pool.NewPool[int](2)
+
+	errA := errors.New("job a failed")
+	errB := errors.New("job b failed")
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) { return 0, errA }})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) { return 0, errB }})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) { return 1, nil }})
+
+	p.Close()
+	go p.Wait()
+	for range p.Results() {
+	}
+
+	got := p.Errors()
+	if len(got) != 2 {
+		t.Fatalf("len(Errors()) = %d, want 2: %v", len(got), got)
+	}
+
+	var foundA, foundB bool
+	for _, err := range got {
+		switch {
+		case errors.Is(err, errA):
+			foundA = true
+		case errors.Is(err, errB):
+			foundB = true
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("Errors() = %v, want both errA and errB", got)
+	}
+}
