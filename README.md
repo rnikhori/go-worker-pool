@@ -103,3 +103,20 @@ outcome, `Retried` counts individual retry attempts, and `AvgDuration`
 is the mean wall-clock time spent per finished job, including any
 retries and backoff sleeps. `Stats()` can be called at any time,
 including while jobs are still running.
+
+## Error aggregation
+
+Every job error (after retries, if any, are exhausted) is also
+recorded internally. `Errors()` returns a snapshot of all of them, in
+completion order:
+
+```go
+for _, err := range p.Errors() {
+	log.Println("job failed:", err)
+}
+```
+
+This is useful for a batch-style workload where you want to drain
+`Results()` for successful values but still review everything that
+went wrong afterward, without threading error handling through every
+call site that consumes results.
