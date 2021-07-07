@@ -85,8 +85,9 @@ type Pool[T any] struct {
 	seq     int64
 	closing bool
 
-	results chan Result[T]
-	wg      sync.WaitGroup
+	results     chan Result[T]
+	wg          sync.WaitGroup
+	workerCount int
 
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
@@ -144,6 +145,7 @@ func NewPool[T any](numWorkers int, opts ...Option[T]) *Pool[T] {
 		opt(p)
 	}
 	p.cond = sync.NewCond(&p.mu)
+	p.workerCount = numWorkers
 
 	p.wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
@@ -151,6 +153,18 @@ func NewPool[T any](numWorkers int, opts ...Option[T]) *Pool[T] {
 	}
 
 	return p
+}
+
+// AddWorker starts one additional worker goroutine, increasing the
+// pool's capacity to process jobs concurrently. It can be called at any
+// time while the pool is running.
+func (p *Pool[T]) AddWorker() {
+	p.mu.Lock()
+	p.workerCount++
+	p.mu.Unlock()
+
+	p.wg.Add(1)
+	go p.worker()
 }
 
 func (p *Pool[T]) worker() {
