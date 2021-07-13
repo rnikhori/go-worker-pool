@@ -5,10 +5,15 @@ package pool
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 )
+
+// ErrMinWorkers is returned by RemoveWorker when the pool only has one
+// worker left; a pool must always keep at least one worker running.
+var ErrMinWorkers = errors.New("pool: cannot remove the last worker")
 
 // Job is a unit of work submitted to a Pool. Fn is called by a worker
 // goroutine, with a context the worker controls, to produce a value of
@@ -85,9 +90,10 @@ type Pool[T any] struct {
 	seq     int64
 	closing bool
 
-	results     chan Result[T]
-	wg          sync.WaitGroup
-	workerCount int
+	results        chan Result[T]
+	wg             sync.WaitGroup
+	workerCount    int
+	removeRequests int
 
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
@@ -167,12 +173,32 @@ func (p *Pool[T]) AddWorker() {
 	go p.worker()
 }
 
+// RemoveWorker asks one worker goroutine to stop after it finishes any
+// job it is currently running (or immediately, if it is idle). It
+// returns ErrMinWorkers rather than remove the pool's last worker.
+func (p *Pool[T]) RemoveWorker() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workerCount <= 1 {
+		return ErrMinWorkers
+	}
+	p.workerCount--
+	p.removeRequests++
+	p.cond.Broadcast()
+	return nil
+}
+
 func (p *Pool[T]) worker() {
 	defer p.wg.Done()
 	for {
 		p.mu.Lock()
-		for p.queue.Len() == 0 && !p.closing {
+		for p.queue.Len() == 0 && !p.closing && p.removeRequests == 0 {
 			p.cond.Wait()
+		}
+		if p.removeRequests > 0 {
+			p.removeRequests--
+			p.mu.Unlock()
+			return
 		}
 		if p.queue.Len() == 0 {
 			p.mu.Unlock()
