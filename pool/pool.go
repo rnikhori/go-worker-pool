@@ -173,6 +173,15 @@ func (p *Pool[T]) AddWorker() {
 	go p.worker()
 }
 
+// WorkerCount returns the current number of worker goroutines, including
+// any started by AddWorker and excluding any pending removal via
+// RemoveWorker.
+func (p *Pool[T]) WorkerCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.workerCount
+}
+
 // RemoveWorker asks one worker goroutine to stop after it finishes any
 // job it is currently running (or immediately, if it is idle). It
 // returns ErrMinWorkers rather than remove the pool's last worker.
