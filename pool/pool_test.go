@@ -245,3 +245,51 @@ func TestErrorsAggregation(t *testing.T) {
 		t.Fatalf("Errors() = %v, want both errA and errB", got)
 	}
 }
+
+func TestDynamicWorkerScaling(t *testing.T) {
+	p := pool.NewPool[int](2)
+
+	if got := p.WorkerCount(); got != 2 {
+		t.Fatalf("WorkerCount() = %d, want 2", got)
+	}
+
+	p.AddWorker()
+	p.AddWorker()
+	if got := p.WorkerCount(); got != 4 {
+		t.Fatalf("WorkerCount() after AddWorker x2 = %d, want 4", got)
+	}
+
+	if err := p.RemoveWorker(); err != nil {
+		t.Fatalf("RemoveWorker() error = %v", err)
+	}
+	if got := p.WorkerCount(); got != 3 {
+		t.Fatalf("WorkerCount() after RemoveWorker = %d, want 3", got)
+	}
+
+	for i := 0; i < 20; i++ {
+		p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+			return 1, nil
+		}})
+	}
+	p.Close()
+	go p.Wait()
+
+	total := 0
+	for range p.Results() {
+		total++
+	}
+	if total != 20 {
+		t.Fatalf("processed %d jobs, want 20", total)
+	}
+}
+
+func TestRemoveWorkerRefusesLastWorker(t *testing.T) {
+	p := pool.NewPool[int](1)
+	if err := p.RemoveWorker(); !errors.Is(err, pool.ErrMinWorkers) {
+		t.Fatalf("RemoveWorker() error = %v, want ErrMinWorkers", err)
+	}
+	p.Close()
+	go p.Wait()
+	for range p.Results() {
+	}
+}
