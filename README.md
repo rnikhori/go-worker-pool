@@ -120,3 +120,18 @@ This is useful for a batch-style workload where you want to drain
 `Results()` for successful values but still review everything that
 went wrong afterward, without threading error handling through every
 call site that consumes results.
+
+## Dynamic worker scaling
+
+The number of workers is not fixed for the lifetime of the pool:
+
+```go
+p.AddWorker()           // scale up by one
+err := p.RemoveWorker() // scale down by one; returns ErrMinWorkers if only one remains
+n := p.WorkerCount()    // current active worker count
+```
+
+`AddWorker` starts a new goroutine immediately. `RemoveWorker` asks one
+worker to stop after it finishes whatever job it is currently running
+(or immediately, if it is idle); it never removes the last worker,
+since a pool always needs at least one to make progress.
