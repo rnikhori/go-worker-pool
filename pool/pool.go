@@ -91,6 +91,7 @@ type Pool[T any] struct {
 	closing bool
 
 	results        chan Result[T]
+	closeResults   sync.Once
 	wg             sync.WaitGroup
 	workerCount    int
 	removeRequests int
@@ -347,5 +348,36 @@ func (p *Pool[T]) Close() {
 // goroutine if the caller is still draining Results() concurrently.
 func (p *Pool[T]) Wait() {
 	p.wg.Wait()
-	close(p.results)
+	p.closeResults.Do(func() { close(p.results) })
+}
+
+// Shutdown stops the pool from accepting further work, lets every
+// worker drain the remaining queue and finish any job already in
+// flight, then closes the results channel. If ctx is done before all
+// workers finish, Shutdown returns ctx.Err() immediately; workers keep
+// running in the background and will still close the results channel
+// once they eventually finish.
+func (p *Pool[T]) Shutdown(ctx context.Context) error {
+	p.mu.Lock()
+	p.closing = true
+	p.cond.Broadcast()
+	p.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		p.closeResults.Do(func() { close(p.results) })
+		return nil
+	case <-ctx.Done():
+		go func() {
+			<-done
+			p.closeResults.Do(func() { close(p.results) })
+		}()
+		return ctx.Err()
+	}
 }
