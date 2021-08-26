@@ -15,6 +15,10 @@ import (
 // worker left; a pool must always keep at least one worker running.
 var ErrMinWorkers = errors.New("pool: cannot remove the last worker")
 
+// ErrPoolClosed is returned by Submit once the pool has been closed via
+// Close or Shutdown; no further jobs are accepted after that point.
+var ErrPoolClosed = errors.New("pool: pool is closed")
+
 // Job is a unit of work submitted to a Pool. Fn is called by a worker
 // goroutine, with a context the worker controls, to produce a value of
 // type T or an error. Priority controls queue ordering: jobs with a
@@ -320,13 +324,19 @@ func (p *Pool[T]) Errors() []error {
 
 // Submit queues a job for execution. It returns immediately; the job runs
 // once a worker becomes available, ahead of any already-queued job with a
-// lower Priority.
-func (p *Pool[T]) Submit(job Job[T]) {
+// lower Priority. Submit returns ErrPoolClosed if the pool has already
+// been closed via Close or Shutdown.
+func (p *Pool[T]) Submit(job Job[T]) error {
 	p.mu.Lock()
+	if p.closing {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
 	p.seq++
 	heap.Push(&p.queue, &jobItem[T]{job: job, seq: p.seq})
 	p.cond.Signal()
 	p.mu.Unlock()
+	return nil
 }
 
 // Results returns the channel on which job results are delivered.
