@@ -283,6 +283,37 @@ func TestDynamicWorkerScaling(t *testing.T) {
 	}
 }
 
+func TestShutdownWaitsForInFlightJobs(t *testing.T) {
+	p := pool.NewPool[int](2)
+
+	var finished int32
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		time.Sleep(50 * time.Millisecond)
+		atomic.AddInt32(&finished, 1)
+		return 1, nil
+	}})
+	time.Sleep(5 * time.Millisecond) // let the worker pick it up
+
+	go func() {
+		for range p.Results() {
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := p.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if got := atomic.LoadInt32(&finished); got != 1 {
+		t.Fatalf("finished = %d, want 1 (job should have completed before Shutdown returned)", got)
+	}
+
+	if err := p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) { return 0, nil }}); !errors.Is(err, pool.ErrPoolClosed) {
+		t.Fatalf("Submit() after Shutdown error = %v, want ErrPoolClosed", err)
+	}
+}
+
 func TestRemoveWorkerRefusesLastWorker(t *testing.T) {
 	p := pool.NewPool[int](1)
 	if err := p.RemoveWorker(); !errors.Is(err, pool.ErrMinWorkers) {
