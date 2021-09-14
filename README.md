@@ -135,3 +135,27 @@ n := p.WorkerCount()    // current active worker count
 worker to stop after it finishes whatever job it is currently running
 (or immediately, if it is idle); it never removes the last worker,
 since a pool always needs at least one to make progress.
+
+## Graceful shutdown
+
+`Shutdown(ctx)` is the recommended way to stop a pool:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+if err := p.Shutdown(ctx); err != nil {
+	log.Printf("pool did not drain in time: %v", err)
+}
+```
+
+It immediately stops the pool from accepting new jobs (`Submit`
+returns `ErrPoolClosed` from then on), lets every worker finish
+draining the queued and in-flight jobs, and closes `Results()` once
+they do. If `ctx` is cancelled or its deadline passes first, `Shutdown`
+returns `ctx.Err()` right away without waiting further — workers keep
+running in the background and still close `Results()` whenever they
+eventually finish.
+
+`Close()` and `Wait()` remain available as lower-level primitives:
+`Close()` just stops accepting new jobs, and `Wait()` blocks
+unconditionally (no deadline) until every worker is done.
