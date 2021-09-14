@@ -314,6 +314,29 @@ func TestShutdownWaitsForInFlightJobs(t *testing.T) {
 	}
 }
 
+func TestShutdownDeadlineExceeded(t *testing.T) {
+	p := pool.NewPool[int](1)
+
+	block := make(chan struct{})
+	defer close(block)
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		<-block
+		return 0, nil
+	}})
+	time.Sleep(5 * time.Millisecond) // let the worker pick it up
+
+	go func() {
+		for range p.Results() {
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := p.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
 func TestRemoveWorkerRefusesLastWorker(t *testing.T) {
 	p := pool.NewPool[int](1)
 	if err := p.RemoveWorker(); !errors.Is(err, pool.ErrMinWorkers) {
