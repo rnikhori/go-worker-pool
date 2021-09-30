@@ -67,6 +67,9 @@ type Pool[T any] struct {
 
 	errsMu sync.Mutex
 	errs   []error
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // Option configures optional Pool behavior at construction time.
@@ -93,6 +96,7 @@ func NewPool[T any](numWorkers int, opts ...Option[T]) *Pool[T] {
 		opt(p)
 	}
 	p.cond = sync.NewCond(&p.mu)
+	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.workerCount = numWorkers
 
 	p.wg.Add(numWorkers)
@@ -210,7 +214,10 @@ func (p *Pool[T]) runWithRetries(job Job[T]) (T, error) {
 // runJob executes a single job, applying its Timeout (if any) as a
 // context deadline and recovering from any panic inside Fn so that one
 // bad job cannot take down its worker goroutine. A recovered panic is
-// reported as an error on the returned Result.
+// reported as an error on the returned Result. The context passed to
+// Fn is derived from the pool's own lifecycle context, so a hard
+// Shutdown (its deadline exceeded) cancels in-flight jobs too, instead
+// of leaving them to run forever unobserved.
 func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -218,7 +225,7 @@ func (p *Pool[T]) runJob(job Job[T]) (value T, err error) {
 		}
 	}()
 
-	ctx := context.Background()
+	ctx := p.ctx
 	if job.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, job.Timeout)
@@ -269,9 +276,10 @@ func (p *Pool[T]) Wait() {
 // Shutdown stops the pool from accepting further work, lets every
 // worker drain the remaining queue and finish any job already in
 // flight, then closes the results channel. If ctx is done before all
-// workers finish, Shutdown returns ctx.Err() immediately; workers keep
-// running in the background and will still close the results channel
-// once they eventually finish.
+// workers finish, Shutdown cancels the pool's internal context (so any
+// in-flight job that honors context cancellation unblocks) and returns
+// ctx.Err() immediately rather than waiting further; workers still
+// close the results channel once they eventually finish.
 func (p *Pool[T]) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	p.closing = true
@@ -289,6 +297,7 @@ func (p *Pool[T]) Shutdown(ctx context.Context) error {
 		p.closeResults.Do(func() { close(p.results) })
 		return nil
 	case <-ctx.Done():
+		p.cancel()
 		go func() {
 			<-done
 			p.closeResults.Do(func() { close(p.results) })
