@@ -85,8 +85,13 @@ func WithRetryBackoff[T any](base, max time.Duration) Option[T] {
 	}
 }
 
-// NewPool starts numWorkers goroutines ready to process jobs.
+// NewPool starts numWorkers goroutines ready to process jobs. A
+// numWorkers less than 1 is treated as 1, since a pool with zero
+// workers would accept jobs that are never run.
 func NewPool[T any](numWorkers int, opts ...Option[T]) *Pool[T] {
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
 	p := &Pool[T]{
 		results:        make(chan Result[T]),
 		retryBaseDelay: defaultRetryBaseDelay,
