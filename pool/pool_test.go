@@ -337,6 +337,57 @@ func TestShutdownDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestConcurrentSubmitStress(t *testing.T) {
+	p := pool.NewPool[int](8)
+
+	const numSubmitters = 10
+	const jobsPerSubmitter = 200
+	const totalJobs = numSubmitters * jobsPerSubmitter
+
+	var submitWg sync.WaitGroup
+	submitWg.Add(numSubmitters)
+	for s := 0; s < numSubmitters; s++ {
+		go func(s int) {
+			defer submitWg.Done()
+			for i := 0; i < jobsPerSubmitter; i++ {
+				i := i
+				p.Submit(pool.Job[int]{
+					Priority: i % 3,
+					Fn: func(ctx context.Context) (int, error) {
+						if i%17 == 0 {
+							return 0, errors.New("simulated failure")
+						}
+						return i, nil
+					},
+				})
+			}
+		}(s)
+	}
+
+	go func() {
+		submitWg.Wait()
+		p.Close()
+	}()
+	go p.Wait()
+
+	count := 0
+	for range p.Results() {
+		count++
+	}
+
+	if count != totalJobs {
+		t.Fatalf("processed %d results, want %d", count, totalJobs)
+	}
+
+	stats := p.Stats()
+	if got := stats.Completed + stats.Failed; got != uint64(totalJobs) {
+		t.Fatalf("Completed+Failed = %d, want %d", got, totalJobs)
+	}
+	if n := p.WorkerCount(); n != 8 {
+		t.Fatalf("WorkerCount() = %d, want 8", n)
+	}
+}
+
 func TestRemoveWorkerRefusesLastWorker(t *testing.T) {
 	p := pool.NewPool[int](1)
 	if err := p.RemoveWorker(); !errors.Is(err, pool.ErrMinWorkers) {
