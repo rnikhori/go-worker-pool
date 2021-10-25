@@ -159,3 +159,16 @@ eventually finish.
 `Close()` and `Wait()` remain available as lower-level primitives:
 `Close()` just stops accepting new jobs, and `Wait()` blocks
 unconditionally (no deadline) until every worker is done.
+
+## Benchmarks
+
+`BenchmarkPool_Throughput` measures end-to-end throughput for cheap
+jobs across a range of worker counts (1 through 32):
+
+```sh
+go test ./pool/ -run ^$ -bench BenchmarkPool_Throughput -benchmem
+```
+
+Use it to see where adding workers stops paying off for your workload
+and hardware; for trivial jobs that do almost no work, coordination
+overhead eventually outweighs the benefit of more workers.
