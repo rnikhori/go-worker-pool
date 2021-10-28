@@ -172,3 +172,13 @@ go test ./pool/ -run ^$ -bench BenchmarkPool_Throughput -benchmem
 Use it to see where adding workers stops paying off for your workload
 and hardware; for trivial jobs that do almost no work, coordination
 overhead eventually outweighs the benefit of more workers.
+
+## Examples
+
+- `main.go` (run with `go run .`): a minimal demo that computes squares
+  of 1..20 across 5 workers.
+- `examples/batchfetch` (run with `go run ./examples/batchfetch`): a
+  more realistic use case that "fetches" a batch of URLs from a flaky
+  fake backend, combining job priorities (critical endpoints ahead of
+  bulk assets), per-job timeouts and retries, and a graceful,
+  deadline-bounded `Shutdown`, then reports `Stats()` and `Errors()`.
