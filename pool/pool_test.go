@@ -64,6 +64,41 @@ func TestPriorityOrdering(t *testing.T) {
 	}
 }
 
+func TestEqualPriorityRunsFIFO(t *testing.T) {
+	p := pool.NewPool[int](1)
+
+	var mu sync.Mutex
+	var order []int
+
+	block := make(chan struct{})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		<-block
+		return 0, nil
+	}})
+	time.Sleep(20 * time.Millisecond)
+
+	for id := 1; id <= 5; id++ {
+		id := id
+		p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+			mu.Lock()
+			order = append(order, id)
+			mu.Unlock()
+			return id, nil
+		}})
+	}
+
+	close(block)
+	p.Close()
+	go p.Wait()
+	for range p.Results() {
+	}
+
+	want := []int{1, 2, 3, 4, 5}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("completion order = %v, want %v (FIFO for equal priority)", order, want)
+	}
+}
+
 func TestJobTimeout(t *testing.T) {
 	p := pool.NewPool[int](1)
 
