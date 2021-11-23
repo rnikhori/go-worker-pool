@@ -99,6 +99,35 @@ func TestEqualPriorityRunsFIFO(t *testing.T) {
 	}
 }
 
+func TestSingleWorkerProcessesAllJobs(t *testing.T) {
+	p := pool.NewPool[int](1)
+
+	const numJobs = 50
+	for i := 0; i < numJobs; i++ {
+		i := i
+		p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+			return i, nil
+		}})
+	}
+	p.Close()
+	go p.Wait()
+
+	seen := make(map[int]bool, numJobs)
+	for r := range p.Results() {
+		if r.Err != nil {
+			t.Fatalf("unexpected error: %v", r.Err)
+		}
+		if seen[r.Value] {
+			t.Fatalf("job %d result delivered more than once", r.Value)
+		}
+		seen[r.Value] = true
+	}
+
+	if len(seen) != numJobs {
+		t.Fatalf("got %d distinct results, want %d", len(seen), numJobs)
+	}
+}
+
 func TestJobTimeout(t *testing.T) {
 	p := pool.NewPool[int](1)
 
