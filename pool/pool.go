@@ -1,5 +1,3 @@
-// Package pool implements a generic, fixed-size worker pool for running
-// jobs concurrently and collecting their results.
 package pool
 
 import (
