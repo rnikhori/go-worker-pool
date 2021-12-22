@@ -122,6 +122,16 @@ func (p *Pool[T]) AddWorker() {
 	go p.worker()
 }
 
+// QueueLength returns the number of jobs currently waiting in the
+// queue, not counting any job a worker has already picked up and is
+// running. It is a point-in-time snapshot that can change immediately
+// after the call returns.
+func (p *Pool[T]) QueueLength() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.queue.Len()
+}
+
 // WorkerCount returns the current number of worker goroutines, including
 // any started by AddWorker and excluding any pending removal via
 // RemoveWorker.
