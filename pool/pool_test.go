@@ -128,6 +128,40 @@ func TestSingleWorkerProcessesAllJobs(t *testing.T) {
 	}
 }
 
+func TestQueueLength(t *testing.T) {
+	p := pool.NewPool[int](1)
+
+	block := make(chan struct{})
+	p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+		<-block
+		return 0, nil
+	}})
+	time.Sleep(10 * time.Millisecond) // let the worker pick up the blocking job
+
+	if got := p.QueueLength(); got != 0 {
+		t.Fatalf("QueueLength() = %d, want 0 before queuing anything else", got)
+	}
+
+	for i := 0; i < 5; i++ {
+		p.Submit(pool.Job[int]{Fn: func(ctx context.Context) (int, error) {
+			return 0, nil
+		}})
+	}
+	if got := p.QueueLength(); got != 5 {
+		t.Fatalf("QueueLength() = %d, want 5", got)
+	}
+
+	close(block)
+	p.Close()
+	go p.Wait()
+	for range p.Results() {
+	}
+
+	if got := p.QueueLength(); got != 0 {
+		t.Fatalf("QueueLength() = %d, want 0 after draining", got)
+	}
+}
+
 func TestJobTimeout(t *testing.T) {
 	p := pool.NewPool[int](1)
 
