@@ -1,6 +1,27 @@
 # go-worker-pool
 
-A minimal generic worker pool / job queue built on goroutines and channels (stdlib only).
+A generic worker pool / job queue for Go, built entirely on the
+standard library (goroutines, channels, `container/heap`, `context`,
+`sync`). It started as a minimal fixed-size pool and grew into one
+that supports job priorities, timeouts, retries, panic recovery,
+metrics, dynamic scaling, and graceful shutdown.
+
+## Contents
+
+- [Build](#build)
+- [Run](#run)
+- [Job priorities](#job-priorities)
+- [Context and per-job timeouts](#context-and-per-job-timeouts)
+- [Retries with exponential backoff](#retries-with-exponential-backoff)
+- [Panic recovery](#panic-recovery)
+- [Metrics via Stats()](#metrics-via-stats)
+- [Error aggregation](#error-aggregation)
+- [Dynamic worker scaling](#dynamic-worker-scaling)
+- [Graceful shutdown](#graceful-shutdown)
+- [Benchmarks](#benchmarks)
+- [Examples](#examples)
+- [Tests](#tests)
+- [API summary](#api-summary)
 
 ## Build
 
@@ -182,3 +203,35 @@ overhead eventually outweighs the benefit of more workers.
   fake backend, combining job priorities (critical endpoints ahead of
   bulk assets), per-job timeouts and retries, and a graceful,
   deadline-bounded `Shutdown`, then reports `Stats()` and `Errors()`.
+
+## Tests
+
+```sh
+go test ./...        # unit tests
+go test -race ./...  # same, with the race detector
+```
+
+Coverage includes basic submission and result delivery, priority
+ordering (including FIFO tie-breaking), per-job timeouts, retry
+success and exhaustion, panic recovery, `Stats()`/`Errors()`
+accounting, dynamic worker scaling, graceful shutdown (both the
+in-flight-jobs-complete and deadline-exceeded paths), and a concurrent
+multi-goroutine submission stress test meant to be run with `-race`.
+
+## API summary
+
+| Method | Purpose |
+| --- | --- |
+| `NewPool[T](numWorkers, ...Option[T])` | Create a pool with at least one worker. |
+| `Submit(Job[T]) error` | Queue a job; `ErrPoolClosed` once closed. |
+| `Results() <-chan Result[T]` | Channel of completed job outcomes. |
+| `Stats() Stats` | Completed/Failed/Retried counts and average duration. |
+| `Errors() []error` | All job errors seen so far, in completion order. |
+| `AddWorker()` / `RemoveWorker() error` | Scale the worker count up or down at runtime. |
+| `WorkerCount() int` | Current number of active workers. |
+| `QueueLength() int` | Number of jobs waiting, not yet picked up. |
+| `Close()` / `Wait()` | Low-level: stop accepting jobs / block until done. |
+| `Shutdown(ctx) error` | Stop accepting jobs, drain within a deadline. |
+| `WithRetryBackoff[T](base, max)` | Pool option overriding the retry backoff schedule. |
+
+And on `Job[T]`: `Fn`, `Priority`, `Timeout`, and `MaxRetries`.
